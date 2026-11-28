@@ -1,0 +1,26 @@
+# Tienda La Esquina: UX.md
+
+## Usabilidad
+- La tarjeta «Con stock bajo» de V1 filtra la tabla de productos al tocarla y permite ordenarla por columna de stock o estado (Heurística #7: Flexibilidad y eficiencia de uso, nngroup.com).
+- En V2 y V3 los campos numéricos («Precio», «Stock mínimo», «Cantidad») inician vacíos con ejemplo atenuado, nunca con valores prellenados que induzcan error (Heurística #5: Prevención de errores, nngroup.com).
+- En V3 ningún tipo de movimiento («Entrada» o «Salida») aparece preseleccionado por defecto, y se muestra el stock resultante antes de guardar (Heurística #5: Prevención de errores, nngroup.com).
+- En V1 el encabezado de la tabla muestra el conteo exacto de productos visibles frente al total («Mostrando X de Y») y un botón para limpiar filtros activos (Heurística #1: Visibilidad del estado del sistema, nngroup.com).
+- En V2 la validación marca con borde y mensaje específico cada campo obligatorio vacío al pulsar «Guardar producto» (Heurística #9: Ayudar a reconocer, diagnosticar y recuperarse de errores, nngroup.com).
+
+## Accesibilidad mínima
+- Todo botón, enlace de menú, tarjeta clicable y campo de formulario tiene un área táctil mínima de 24 × 24 píxeles CSS con separación suficiente para uso en celular (WCAG 2.2, Criterio 2.5.8 Tamaño del objetivo mínimo).
+- Cada `<input>` y `<select>` tiene una etiqueta `<label>` visible asociada programáticamente; el ejemplo («Ej. 12.500») va fuera o en texto de ayuda, nunca solo como `placeholder` (WCAG 2.2, Criterio 3.3.2 Etiquetas o instrucciones; GOV.UK Design System, Text input).
+- El estado «Stock bajo» en tarjetas y tabla se comunica siempre con la etiqueta textual «Stock bajo» junto al número, nunca únicamente con color rojo (WCAG 2.2, Criterio 1.4.1 Uso del color).
+- Todos los textos, encabezados, etiquetas y mensajes de alerta mantienen un contraste mínimo de 4.5:1 respecto a su fondo (WCAG 2.2, Criterio 1.4.3 Contraste mínimo).
+- El foco del teclado (`:focus-visible`) es visible en pestañas de navegación, botones y controles de formulario sin quedar oculto por encabezados (WCAG 2.2, Criterio 2.4.11 Foco no oculto mínimo).
+
+## Visualización de datos
+- ¿Qué productos están por acabarse y cuánto falta para reponer el mínimo? → Una tabla basta, ordenada por stock o filtrada por «Stock bajo», mostrando stock actual, mínimo y estado textual (From Data to Viz, data-to-viz.com).
+- ¿Cómo ha cambiado el inventario reciente y cuáles fueron las últimas entradas o salidas? → Una tabla basta en el historial de V3 con fecha, producto, tipo, cantidad y nota (From Data to Viz, data-to-viz.com).
+- ¿Cuántos productos hay en total, cuántos están bajos y cuántos movimientos existen? → Tres tarjetas numéricas de resumen en la parte superior de V1 sin gráficos decorativos (GOV.UK Design System, Summary list / Paneles).
+
+## Textos de la interfaz
+- Los títulos de ventana y botones usan verbos directos en lenguaje cotidiano del tendero («Guardar producto», «Registrar», «Buscar por nombre...») sin jerga técnica ni siglas de base de datos (GOV.UK Design System, Content design).
+- Los errores de validación y rechazo de stock explican exactamente qué pasó y cómo corregirlo en una oración («No hay suficiente stock: quedan N unidades») dentro de un banner visible debajo del formulario (GOV.UK Design System, Error message).
+- Las fechas en el historial usan formato corto local (`21 nov 13:48`), los precios llevan signo pesos con punto de miles sin decimales (`$12.500`) y las celdas sin nota muestran un guion corto (`—`) (GOV.UK Design System, Dates / Formatting).
+- Los textos de ayuda bajo campos («Con este número o menos sale la alerta de stock bajo») van en una sola frase breve, sin signos de exclamación ni relleno (GOV.UK Design System, Hint text).

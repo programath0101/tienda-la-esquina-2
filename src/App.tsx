@@ -3,6 +3,7 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
+  ArrowUpDown,
   ChevronRight,
   Info,
   Plus,
@@ -11,6 +12,12 @@ import {
 import {supabase} from './supabase';
 
 type Vista = 'inventario' | 'nuevo-producto' | 'movimientos';
+type OrdenTabla =
+  | 'nombre-asc'
+  | 'stock-asc'
+  | 'stock-desc'
+  | 'estado-bajo-primero'
+  | 'estado-ok-primero';
 
 interface Categoria {
   id: number;
@@ -97,6 +104,8 @@ export default function App() {
 
   const [busqueda, setBusqueda] = useState<string>('');
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todas');
+  const [soloStockBajo, setSoloStockBajo] = useState<boolean>(false);
+  const [ordenTabla, setOrdenTabla] = useState<OrdenTabla>('nombre-asc');
 
   const [nuevoNombre, setNuevoNombre] = useState<string>('');
   const [nuevaCategoriaId, setNuevaCategoriaId] = useState<string>('');
@@ -116,11 +125,12 @@ export default function App() {
   const [errorCargarMovimientos, setErrorCargarMovimientos] = useState<string | null>(null);
 
   const [movProductoId, setMovProductoId] = useState<string>('');
-  const [movTipo, setMovTipo] = useState<TipoMovimiento>('entrada');
+  const [movTipo, setMovTipo] = useState<TipoMovimiento | null>(null);
   const [movCantidad, setMovCantidad] = useState<string>('');
   const [movNota, setMovNota] = useState<string>('');
   const [erroresMovimiento, setErroresMovimiento] = useState<{
     producto?: string;
+    tipo?: string;
     cantidad?: string;
   }>({});
   const [registrandoMovimiento, setRegistrandoMovimiento] = useState<boolean>(false);
@@ -206,16 +216,55 @@ export default function App() {
 
   const productosFiltrados = useMemo(() => {
     const termino = busqueda.trim().toLowerCase();
-    return productos.filter((producto) => {
+    const filtrados = productos.filter((producto) => {
       const coincideNombre =
         termino === '' || producto.nombre.toLowerCase().includes(termino);
       const coincideCategoria =
         categoriaFiltro === 'todas' || String(producto.categoria_id) === categoriaFiltro;
-      return coincideNombre && coincideCategoria;
+      const coincideStockBajo = !soloStockBajo || producto.stock_bajo;
+      return coincideNombre && coincideCategoria && coincideStockBajo;
     });
-  }, [productos, busqueda, categoriaFiltro]);
 
-  const hayFiltrosActivos = busqueda.trim() !== '' || categoriaFiltro !== 'todas';
+    return [...filtrados].sort((a, b) => {
+      switch (ordenTabla) {
+        case 'stock-asc':
+          return a.stock_actual - b.stock_actual || a.nombre.localeCompare(b.nombre, 'es');
+        case 'stock-desc':
+          return b.stock_actual - a.stock_actual || a.nombre.localeCompare(b.nombre, 'es');
+        case 'estado-bajo-primero':
+          if (a.stock_bajo !== b.stock_bajo) {
+            return a.stock_bajo ? -1 : 1;
+          }
+          return a.stock_actual - b.stock_actual || a.nombre.localeCompare(b.nombre, 'es');
+        case 'estado-ok-primero':
+          if (a.stock_bajo !== b.stock_bajo) {
+            return a.stock_bajo ? 1 : -1;
+          }
+          return a.nombre.localeCompare(b.nombre, 'es');
+        default:
+          return a.nombre.localeCompare(b.nombre, 'es');
+      }
+    });
+  }, [productos, busqueda, categoriaFiltro, soloStockBajo, ordenTabla]);
+
+  const hayFiltrosActivos =
+    busqueda.trim() !== '' || categoriaFiltro !== 'todas' || soloStockBajo;
+
+  const limpiarFiltros = () => {
+    setBusqueda('');
+    setCategoriaFiltro('todas');
+    setSoloStockBajo(false);
+  };
+
+  const alternarOrdenStock = () => {
+    setOrdenTabla((prev) => (prev === 'stock-asc' ? 'stock-desc' : 'stock-asc'));
+  };
+
+  const alternarOrdenEstado = () => {
+    setOrdenTabla((prev) =>
+      prev === 'estado-bajo-primero' ? 'estado-ok-primero' : 'estado-bajo-primero',
+    );
+  };
 
   const abrirNuevoProducto = () => {
     setNuevoNombre('');
@@ -312,11 +361,16 @@ export default function App() {
 
     const nuevosErrores: {
       producto?: string;
+      tipo?: string;
       cantidad?: string;
     } = {};
 
     if (!movProductoId) {
       nuevosErrores.producto = 'Elige un producto de la lista.';
+    }
+
+    if (!movTipo) {
+      nuevosErrores.tipo = 'Elige si el movimiento es entrada o salida.';
     }
 
     const cantidadTexto = movCantidad.trim();
@@ -327,7 +381,7 @@ export default function App() {
       nuevosErrores.cantidad = 'Escribe una cantidad entera mayor que 0.';
     }
 
-    if (Object.keys(nuevosErrores).length > 0) {
+    if (Object.keys(nuevosErrores).length > 0 || !movTipo) {
       setErroresMovimiento(nuevosErrores);
       return;
     }
@@ -349,7 +403,7 @@ export default function App() {
       }
 
       setMovProductoId('');
-      setMovTipo('entrada');
+      setMovTipo(null);
       setMovCantidad('');
       setMovNota('');
       setErroresMovimiento({});
@@ -364,6 +418,22 @@ export default function App() {
       setRegistrandoMovimiento(false);
     }
   };
+
+  const productoSeleccionadoMovimiento = movProductoId
+    ? productosPorId.get(Number(movProductoId))
+    : undefined;
+  const cantidadMovimientoTrim = movCantidad.trim();
+  const cantidadMovimientoNumero = Number(cantidadMovimientoTrim);
+  const cantidadMovimientoValida =
+    cantidadMovimientoTrim !== '' &&
+    Number.isInteger(cantidadMovimientoNumero) &&
+    cantidadMovimientoNumero > 0;
+  const stockResultantePrevio =
+    productoSeleccionadoMovimiento && movTipo && cantidadMovimientoValida
+      ? movTipo === 'entrada'
+        ? productoSeleccionadoMovimiento.stock_actual + cantidadMovimientoNumero
+        : productoSeleccionadoMovimiento.stock_actual - cantidadMovimientoNumero
+      : null;
 
   return (
     <div className="min-h-screen bg-[#F6F7F4] text-[#18221D]">
@@ -483,30 +553,57 @@ export default function App() {
                 )}
               </div>
 
-              <div
-                className={`px-5 py-4 sm:px-6 sm:py-5 ${
-                  !cargando && totalStockBajo > 0 ? 'bg-[#FEF2F2]' : ''
+              <button
+                type="button"
+                onClick={() => setSoloStockBajo((prev) => !prev)}
+                aria-pressed={soloStockBajo}
+                className={`min-h-[44px] w-full px-5 py-4 text-left transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#166534] sm:px-6 sm:py-5 ${
+                  soloStockBajo
+                    ? 'bg-[#FEF2F2] ring-2 ring-inset ring-[#B91C1C]'
+                    : !cargando && totalStockBajo > 0
+                      ? 'bg-[#FEF2F2] hover:bg-[#FEE2E2]/70'
+                      : 'bg-[#FFFFFF] hover:bg-[#F6F7F4]'
                 }`}
               >
-                <p
-                  className={`text-sm font-medium ${
-                    !cargando && totalStockBajo > 0 ? 'text-[#991B1B]' : 'text-[#526058]'
-                  }`}
-                >
-                  Con stock bajo
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className={`text-sm font-medium ${
+                      soloStockBajo || (!cargando && totalStockBajo > 0)
+                        ? 'text-[#991B1B]'
+                        : 'text-[#526058]'
+                    }`}
+                  >
+                    Con stock bajo
+                  </span>
+                  <span
+                    className={`text-xs font-semibold ${
+                      soloStockBajo ? 'text-[#B91C1C]' : 'text-[#526058]'
+                    }`}
+                  >
+                    {soloStockBajo ? 'Filtro activo' : 'Tocar para filtrar'}
+                  </span>
+                </div>
                 {cargando ? (
                   <div className="mt-2 h-8 w-14 rounded bg-[#E5E9E2]" />
                 ) : (
-                  <p
-                    className={`font-mono mt-1 text-2xl font-medium tabular-nums sm:text-3xl ${
-                      totalStockBajo > 0 ? 'text-[#B91C1C]' : 'text-[#18221D]'
-                    }`}
-                  >
-                    {totalStockBajo}
-                  </p>
+                  <div className="mt-1 flex items-baseline gap-2.5">
+                    <span
+                      className={`font-mono text-2xl font-medium tabular-nums sm:text-3xl ${
+                        totalStockBajo > 0 ? 'text-[#B91C1C]' : 'text-[#18221D]'
+                      }`}
+                    >
+                      {totalStockBajo}
+                    </span>
+                    <span
+                      className={`text-sm font-semibold ${
+                        totalStockBajo > 0 ? 'text-[#B91C1C]' : 'text-[#166534]'
+                      }`}
+                    >
+                      {totalStockBajo > 0 ? 'Stock bajo' : 'Al día'}
+                    </span>
+                  </div>
                 )}
-              </div>
+              </button>
 
               <div className="px-5 py-4 sm:px-6 sm:py-5">
                 <p className="text-sm font-medium text-[#526058]">Movimientos registrados</p>
@@ -520,28 +617,36 @@ export default function App() {
               </div>
             </div>
 
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="relative flex-1 sm:max-w-xs">
-                <label htmlFor="buscar-producto" className="sr-only">
-                  Buscar por nombre
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="flex-1 sm:max-w-xs">
+                <label
+                  htmlFor="buscar-producto"
+                  className="mb-1 block text-xs font-semibold text-[#526058]"
+                >
+                  Buscar producto
                 </label>
-                <Search
-                  className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-[#526058]"
-                  aria-hidden="true"
-                />
-                <input
-                  id="buscar-producto"
-                  type="search"
-                  value={busqueda}
-                  onChange={(e) => setBusqueda(e.target.value)}
-                  placeholder="Buscar por nombre..."
-                  className="min-h-[44px] w-full rounded-md border border-[#D8DDD4] bg-[#FFFFFF] pr-3 pl-9 text-sm text-[#18221D] placeholder:text-[#526058] focus:border-[#166534] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534]"
-                />
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-[#526058]"
+                    aria-hidden="true"
+                  />
+                  <input
+                    id="buscar-producto"
+                    type="search"
+                    value={busqueda}
+                    onChange={(e) => setBusqueda(e.target.value)}
+                    placeholder="Buscar por nombre..."
+                    className="min-h-[44px] w-full rounded-md border border-[#D8DDD4] bg-[#FFFFFF] pr-3 pl-9 text-sm text-[#18221D] placeholder:text-[#526058] focus:border-[#166534] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534]"
+                  />
+                </div>
               </div>
 
               <div className="sm:w-56">
-                <label htmlFor="filtro-categoria" className="sr-only">
-                  Filtrar por categoría
+                <label
+                  htmlFor="filtro-categoria"
+                  className="mb-1 block text-xs font-semibold text-[#526058]"
+                >
+                  Categoría
                 </label>
                 <select
                   id="filtro-categoria"
@@ -557,17 +662,47 @@ export default function App() {
                   ))}
                 </select>
               </div>
+
+              <div className="md:hidden">
+                <label
+                  htmlFor="orden-productos-movil"
+                  className="mb-1 block text-xs font-semibold text-[#526058]"
+                >
+                  Ordenar por
+                </label>
+                <select
+                  id="orden-productos-movil"
+                  value={ordenTabla}
+                  onChange={(e) => setOrdenTabla(e.target.value as OrdenTabla)}
+                  className="min-h-[44px] w-full rounded-md border border-[#D8DDD4] bg-[#FFFFFF] px-3 py-2 text-sm text-[#18221D] focus:border-[#166534] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534]"
+                >
+                  <option value="nombre-asc">Nombre (A–Z)</option>
+                  <option value="stock-asc">Stock (menor a mayor)</option>
+                  <option value="stock-desc">Stock (mayor a menor)</option>
+                  <option value="estado-bajo-primero">Estado (Stock bajo primero)</option>
+                  <option value="estado-ok-primero">Estado (OK primero)</option>
+                </select>
+              </div>
+
+              {hayFiltrosActivos && (
+                <button
+                  type="button"
+                  onClick={limpiarFiltros}
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-[#D8DDD4] bg-[#FFFFFF] px-4 py-2 text-sm font-medium text-[#18221D] whitespace-nowrap shrink-0 transition-colors duration-150 hover:border-[#18221D]"
+                >
+                  Limpiar filtros
+                </button>
+              )}
             </div>
 
             <div className="border border-[#D8DDD4] bg-[#FFFFFF]">
-              <div className="flex items-center justify-between gap-4 border-b-4 border-double border-[#18221D] px-5 py-3.5 sm:px-6">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b-4 border-double border-[#18221D] px-5 py-3.5 sm:px-6">
                 <h2 className="font-display text-base font-semibold text-[#18221D]">
                   Lista de productos
                 </h2>
                 {!cargando && (
                   <span className="font-mono text-xs text-[#526058] tabular-nums">
-                    {productosFiltrados.length}{' '}
-                    {productosFiltrados.length === 1 ? 'producto' : 'productos'}
+                    Mostrando {productosFiltrados.length} de {totalProductos}
                   </span>
                 )}
               </div>
@@ -608,16 +743,13 @@ export default function App() {
               ) : productosFiltrados.length === 0 ? (
                 <div className="px-5 py-10 text-center sm:px-6">
                   <p className="mx-auto max-w-md text-sm text-[#526058]">
-                    Ningún producto coincide con tu búsqueda o categoría seleccionada.
+                    Ningún producto coincide con los filtros actuales.
                   </p>
                   {hayFiltrosActivos && (
                     <div className="mt-4">
                       <button
                         type="button"
-                        onClick={() => {
-                          setBusqueda('');
-                          setCategoriaFiltro('todas');
-                        }}
+                        onClick={limpiarFiltros}
                         className="inline-flex min-h-[44px] items-center rounded-md border border-[#D8DDD4] bg-[#FFFFFF] px-4 py-2 text-sm font-medium text-[#18221D] whitespace-nowrap shrink-0 transition-colors duration-150 hover:border-[#18221D]"
                       >
                         Limpiar filtros
@@ -631,23 +763,90 @@ export default function App() {
                     <table className="w-full border-collapse text-left">
                       <thead>
                         <tr className="border-b border-[#D8DDD4] bg-[#F6F7F4]/60 text-xs font-semibold text-[#526058]">
-                          <th scope="col" className="px-6 py-3">
-                            Producto
+                          <th
+                            scope="col"
+                            aria-sort={ordenTabla === 'nombre-asc' ? 'ascending' : 'none'}
+                            className="px-6 py-2.5"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setOrdenTabla('nombre-asc')}
+                              className={`inline-flex min-h-[32px] items-center gap-1 rounded px-1 -ml-1 transition-colors hover:text-[#18221D] ${
+                                ordenTabla === 'nombre-asc' ? 'text-[#18221D]' : ''
+                              }`}
+                            >
+                              Producto
+                            </button>
                           </th>
-                          <th scope="col" className="px-4 py-3">
+                          <th scope="col" className="px-4 py-2.5">
                             Categoría
                           </th>
-                          <th scope="col" className="px-4 py-3 text-right">
+                          <th scope="col" className="px-4 py-2.5 text-right">
                             Precio
                           </th>
-                          <th scope="col" className="px-4 py-3 text-right">
-                            Stock
+                          <th
+                            scope="col"
+                            aria-sort={
+                              ordenTabla === 'stock-asc'
+                                ? 'ascending'
+                                : ordenTabla === 'stock-desc'
+                                  ? 'descending'
+                                  : 'none'
+                            }
+                            className="px-4 py-2.5 text-right"
+                          >
+                            <button
+                              type="button"
+                              onClick={alternarOrdenStock}
+                              className={`inline-flex min-h-[32px] items-center justify-end gap-1 rounded px-1 -mr-1 transition-colors hover:text-[#18221D] ${
+                                ordenTabla === 'stock-asc' || ordenTabla === 'stock-desc'
+                                  ? 'text-[#166534]'
+                                  : ''
+                              }`}
+                            >
+                              <span>Stock</span>
+                              {ordenTabla === 'stock-asc' ? (
+                                <ArrowUp className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                              ) : ordenTabla === 'stock-desc' ? (
+                                <ArrowDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                              ) : (
+                                <ArrowUpDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                              )}
+                            </button>
                           </th>
-                          <th scope="col" className="px-4 py-3 text-right">
+                          <th scope="col" className="px-4 py-2.5 text-right">
                             Mínimo
                           </th>
-                          <th scope="col" className="px-6 py-3 text-right">
-                            Estado
+                          <th
+                            scope="col"
+                            aria-sort={
+                              ordenTabla === 'estado-bajo-primero'
+                                ? 'ascending'
+                                : ordenTabla === 'estado-ok-primero'
+                                  ? 'descending'
+                                  : 'none'
+                            }
+                            className="px-6 py-2.5 text-right"
+                          >
+                            <button
+                              type="button"
+                              onClick={alternarOrdenEstado}
+                              className={`inline-flex min-h-[32px] items-center justify-end gap-1 rounded px-1 -mr-1 transition-colors hover:text-[#18221D] ${
+                                ordenTabla === 'estado-bajo-primero' ||
+                                ordenTabla === 'estado-ok-primero'
+                                  ? 'text-[#166534]'
+                                  : ''
+                              }`}
+                            >
+                              <span>Estado</span>
+                              {ordenTabla === 'estado-bajo-primero' ? (
+                                <ArrowDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                              ) : ordenTabla === 'estado-ok-primero' ? (
+                                <ArrowUp className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                              ) : (
+                                <ArrowUpDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                              )}
+                            </button>
                           </th>
                         </tr>
                       </thead>
@@ -739,7 +938,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setVista('inventario')}
-                className="hover:text-[#18221D] hover:underline"
+                className="inline-flex min-h-[44px] items-center px-1 hover:text-[#18221D] hover:underline"
               >
                 Inventario
               </button>
@@ -778,15 +977,22 @@ export default function App() {
                       }}
                       placeholder="Ej. Aceite 1 L"
                       aria-invalid={erroresFormulario.nombre ? 'true' : undefined}
-                      aria-describedby={erroresFormulario.nombre ? 'error-nuevo-nombre' : undefined}
+                      aria-describedby={
+                        erroresFormulario.nombre
+                          ? 'ayuda-nuevo-nombre error-nuevo-nombre'
+                          : 'ayuda-nuevo-nombre'
+                      }
                       className={`mt-1.5 min-h-[44px] w-full rounded-md border bg-[#FFFFFF] px-3 py-2 text-sm text-[#18221D] placeholder:text-[#526058] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534] ${
                         erroresFormulario.nombre
                           ? 'border-[#B91C1C] focus:border-[#B91C1C]'
                           : 'border-[#D8DDD4] focus:border-[#166534]'
                       }`}
                     />
+                    <p id="ayuda-nuevo-nombre" className="mt-1.5 text-xs text-[#526058]">
+                      Ejemplo: Aceite 1 L.
+                    </p>
                     {erroresFormulario.nombre && (
-                      <p id="error-nuevo-nombre" className="mt-1.5 text-sm text-[#B91C1C]">
+                      <p id="error-nuevo-nombre" className="mt-1 text-sm text-[#B91C1C]">
                         {erroresFormulario.nombre}
                       </p>
                     )}
@@ -810,7 +1016,9 @@ export default function App() {
                       }}
                       aria-invalid={erroresFormulario.categoria ? 'true' : undefined}
                       aria-describedby={
-                        erroresFormulario.categoria ? 'error-nueva-categoria' : undefined
+                        erroresFormulario.categoria
+                          ? 'ayuda-nueva-categoria error-nueva-categoria'
+                          : 'ayuda-nueva-categoria'
                       }
                       className={`mt-1.5 min-h-[44px] w-full rounded-md border bg-[#FFFFFF] px-3 py-2 text-sm text-[#18221D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534] ${
                         erroresFormulario.categoria
@@ -825,8 +1033,11 @@ export default function App() {
                         </option>
                       ))}
                     </select>
+                    <p id="ayuda-nueva-categoria" className="mt-1.5 text-xs text-[#526058]">
+                      Elige el grupo al que pertenece el producto.
+                    </p>
                     {erroresFormulario.categoria && (
-                      <p id="error-nueva-categoria" className="mt-1.5 text-sm text-[#B91C1C]">
+                      <p id="error-nueva-categoria" className="mt-1 text-sm text-[#B91C1C]">
                         {erroresFormulario.categoria}
                       </p>
                     )}
@@ -863,7 +1074,9 @@ export default function App() {
                           placeholder="12500"
                           aria-invalid={erroresFormulario.precio ? 'true' : undefined}
                           aria-describedby={
-                            erroresFormulario.precio ? 'error-nuevo-precio' : undefined
+                            erroresFormulario.precio
+                              ? 'ayuda-nuevo-precio error-nuevo-precio'
+                              : 'ayuda-nuevo-precio'
                           }
                           className={`font-mono min-h-[44px] w-full rounded-md border bg-[#FFFFFF] pr-3 pl-7 text-sm text-[#18221D] tabular-nums placeholder:text-[#526058] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534] ${
                             erroresFormulario.precio
@@ -872,8 +1085,11 @@ export default function App() {
                           }`}
                         />
                       </div>
+                      <p id="ayuda-nuevo-precio" className="mt-1.5 text-xs text-[#526058]">
+                        Ejemplo: 12500 sin puntos ni decimales.
+                      </p>
                       {erroresFormulario.precio && (
-                        <p id="error-nuevo-precio" className="mt-1.5 text-sm text-[#B91C1C]">
+                        <p id="error-nuevo-precio" className="mt-1 text-sm text-[#B91C1C]">
                           {erroresFormulario.precio}
                         </p>
                       )}
@@ -906,7 +1122,7 @@ export default function App() {
                         aria-invalid={erroresFormulario.stockMinimo ? 'true' : undefined}
                         aria-describedby={
                           erroresFormulario.stockMinimo
-                            ? 'error-nuevo-stock-minimo'
+                            ? 'ayuda-stock-minimo error-nuevo-stock-minimo'
                             : 'ayuda-stock-minimo'
                         }
                         className={`font-mono mt-1.5 min-h-[44px] w-full rounded-md border bg-[#FFFFFF] px-3 py-2 text-sm text-[#18221D] tabular-nums placeholder:text-[#526058] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534] ${
@@ -915,13 +1131,12 @@ export default function App() {
                             : 'border-[#D8DDD4] focus:border-[#166534]'
                         }`}
                       />
-                      {erroresFormulario.stockMinimo ? (
-                        <p id="error-nuevo-stock-minimo" className="mt-1.5 text-sm text-[#B91C1C]">
+                      <p id="ayuda-stock-minimo" className="mt-1.5 text-xs text-[#526058]">
+                        Con este número o menos sale la alerta de stock bajo.
+                      </p>
+                      {erroresFormulario.stockMinimo && (
+                        <p id="error-nuevo-stock-minimo" className="mt-1 text-sm text-[#B91C1C]">
                           {erroresFormulario.stockMinimo}
-                        </p>
-                      ) : (
-                        <p id="ayuda-stock-minimo" className="mt-1.5 text-xs text-[#526058]">
-                          Con este número o menos sale la alerta de stock bajo.
                         </p>
                       )}
                     </div>
@@ -1023,7 +1238,9 @@ export default function App() {
                           }}
                           aria-invalid={erroresMovimiento.producto ? 'true' : undefined}
                           aria-describedby={
-                            erroresMovimiento.producto ? 'error-mov-producto' : undefined
+                            erroresMovimiento.producto
+                              ? 'ayuda-mov-producto error-mov-producto'
+                              : 'ayuda-mov-producto'
                           }
                           className={`mt-1.5 min-h-[44px] w-full rounded-md border bg-[#FFFFFF] px-3 py-2 text-sm text-[#18221D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534] ${
                             erroresMovimiento.producto
@@ -1038,8 +1255,11 @@ export default function App() {
                             </option>
                           ))}
                         </select>
+                        <p id="ayuda-mov-producto" className="mt-1.5 text-xs text-[#526058]">
+                          Elige el producto que entra o sale de la tienda.
+                        </p>
                         {erroresMovimiento.producto && (
-                          <p id="error-mov-producto" className="mt-1.5 text-sm text-[#B91C1C]">
+                          <p id="error-mov-producto" className="mt-1 text-sm text-[#B91C1C]">
                             {erroresMovimiento.producto}
                           </p>
                         )}
@@ -1052,12 +1272,22 @@ export default function App() {
                         <div
                           role="group"
                           aria-label="Tipo de movimiento"
-                          className="mt-1.5 grid grid-cols-2 divide-x divide-[#D8DDD4] overflow-hidden rounded-md border border-[#D8DDD4]"
+                          aria-describedby={
+                            erroresMovimiento.tipo
+                              ? 'ayuda-mov-tipo error-mov-tipo'
+                              : 'ayuda-mov-tipo'
+                          }
+                          className={`mt-1.5 grid grid-cols-2 divide-x divide-[#D8DDD4] overflow-hidden rounded-md border ${
+                            erroresMovimiento.tipo ? 'border-[#B91C1C]' : 'border-[#D8DDD4]'
+                          }`}
                         >
                           <button
                             type="button"
                             onClick={() => {
                               setMovTipo('entrada');
+                              if (erroresMovimiento.tipo) {
+                                setErroresMovimiento((prev) => ({...prev, tipo: undefined}));
+                              }
                               if (errorRegistrarMovimiento) {
                                 setErrorRegistrarMovimiento(null);
                               }
@@ -1076,6 +1306,9 @@ export default function App() {
                             type="button"
                             onClick={() => {
                               setMovTipo('salida');
+                              if (erroresMovimiento.tipo) {
+                                setErroresMovimiento((prev) => ({...prev, tipo: undefined}));
+                              }
                               if (errorRegistrarMovimiento) {
                                 setErrorRegistrarMovimiento(null);
                               }
@@ -1091,6 +1324,14 @@ export default function App() {
                             Salida
                           </button>
                         </div>
+                        <p id="ayuda-mov-tipo" className="mt-1.5 text-xs text-[#526058]">
+                          Elige Entrada cuando llega mercancía o Salida cuando se vende.
+                        </p>
+                        {erroresMovimiento.tipo && (
+                          <p id="error-mov-tipo" className="mt-1 text-sm text-[#B91C1C]">
+                            {erroresMovimiento.tipo}
+                          </p>
+                        )}
                       </div>
 
                       <div>
@@ -1116,10 +1357,12 @@ export default function App() {
                               setErrorRegistrarMovimiento(null);
                             }
                           }}
-                          placeholder="1"
+                          placeholder="5"
                           aria-invalid={erroresMovimiento.cantidad ? 'true' : undefined}
                           aria-describedby={
-                            erroresMovimiento.cantidad ? 'error-mov-cantidad' : undefined
+                            erroresMovimiento.cantidad
+                              ? 'ayuda-mov-cantidad error-mov-cantidad'
+                              : 'ayuda-mov-cantidad'
                           }
                           className={`font-mono mt-1.5 min-h-[44px] w-full rounded-md border bg-[#FFFFFF] px-3 py-2 text-sm text-[#18221D] tabular-nums placeholder:text-[#526058] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534] ${
                             erroresMovimiento.cantidad
@@ -1127,8 +1370,11 @@ export default function App() {
                               : 'border-[#D8DDD4] focus:border-[#166534]'
                           }`}
                         />
+                        <p id="ayuda-mov-cantidad" className="mt-1.5 text-xs text-[#526058]">
+                          Ejemplo: 5. Escribe un número entero mayor que 0.
+                        </p>
                         {erroresMovimiento.cantidad && (
-                          <p id="error-mov-cantidad" className="mt-1.5 text-sm text-[#B91C1C]">
+                          <p id="error-mov-cantidad" className="mt-1 text-sm text-[#B91C1C]">
                             {erroresMovimiento.cantidad}
                           </p>
                         )}
@@ -1146,10 +1392,55 @@ export default function App() {
                           type="text"
                           value={movNota}
                           onChange={(e) => setMovNota(e.target.value)}
-                          placeholder="Ej. Pedido al proveedor o ventas del día"
+                          placeholder="Ej. Pedido al proveedor"
+                          aria-describedby="ayuda-mov-nota"
                           className="mt-1.5 min-h-[44px] w-full rounded-md border border-[#D8DDD4] bg-[#FFFFFF] px-3 py-2 text-sm text-[#18221D] placeholder:text-[#526058] focus:border-[#166534] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#166534]"
                         />
+                        <p id="ayuda-mov-nota" className="mt-1.5 text-xs text-[#526058]">
+                          Ejemplo: Pedido al proveedor o ventas del día.
+                        </p>
                       </div>
+
+                      {productoSeleccionadoMovimiento && (
+                        <div
+                          aria-live="polite"
+                          className={`border p-3 text-sm ${
+                            stockResultantePrevio !== null && stockResultantePrevio < 0
+                              ? 'border-[#FCA5A5] bg-[#FEF2F2] text-[#991B1B]'
+                              : 'border-[#D8DDD4] bg-[#F6F7F4] text-[#18221D]'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span>
+                              Stock actual:{' '}
+                              <strong className="font-mono font-semibold tabular-nums">
+                                {productoSeleccionadoMovimiento.stock_actual}
+                              </strong>
+                            </span>
+                            {stockResultantePrevio !== null && (
+                              <span>
+                                Stock resultante:{' '}
+                                <strong className="font-mono font-semibold tabular-nums">
+                                  {stockResultantePrevio}
+                                </strong>
+                              </span>
+                            )}
+                          </div>
+                          {stockResultantePrevio !== null && stockResultantePrevio < 0 && (
+                            <p className="mt-1 text-xs font-medium text-[#B91C1C]">
+                              Esta salida supera el stock disponible.
+                            </p>
+                          )}
+                          {stockResultantePrevio !== null &&
+                            stockResultantePrevio >= 0 &&
+                            stockResultantePrevio <= productoSeleccionadoMovimiento.stock_minimo && (
+                              <p className="mt-1 text-xs font-medium text-[#B91C1C]">
+                                Con este movimiento quedará en Stock bajo (mínimo:{' '}
+                                {productoSeleccionadoMovimiento.stock_minimo}).
+                              </p>
+                            )}
+                        </div>
+                      )}
 
                       <div className="flex justify-end border-t border-[#E5E9E2] pt-5">
                         <button
